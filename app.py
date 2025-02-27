@@ -166,21 +166,33 @@ if data is not None:
     expiration_data = product_data[['Fecha_Vencimiento', 'Stock']].dropna()
     expiration_threshold = pd.Timestamp.today() + pd.Timedelta(days=expiration_days)
 
-    # Debugging output
+    # Enhanced debugging
     st.write("Debugging expiration data:")
-    st.write("Expiration data types:", expiration_data.dtypes)
-    st.write("Expiration data sample:", expiration_data.head())
+    st.write(f"Expiration data shape: {expiration_data.shape}")
+    if expiration_data.empty:
+        st.warning("No hay datos de vencimiento disponibles después de eliminar valores nulos.")
+    else:
+        st.write("Expiration data types:", expiration_data.dtypes)
+        st.write("Expiration data sample:", expiration_data.head())
+        st.write("Any NaT in Fecha_Vencimiento:", expiration_data['Fecha_Vencimiento'].isna().any())
     st.write(f"Expiration threshold: {expiration_threshold} (type: {type(expiration_threshold)})")
 
-    # Robust comparison with type checking
-    valid_dates = expiration_data['Fecha_Vencimiento'].notna()
-    if not valid_dates.all():
-        st.warning("Algunas fechas en 'Fecha_Vencimiento' son inválidas y serán ignoradas.")
-    
-    expiring_soon = expiration_data[
-        valid_dates & 
-        (expiration_data['Fecha_Vencimiento'] <= expiration_threshold.replace(tzinfo=None))
-    ]
+    # Robust comparison with explicit checks
+    if expiration_data.empty:
+        expiring_soon = pd.DataFrame(columns=['Fecha_Vencimiento', 'Stock'])
+    else:
+        valid_dates = expiration_data['Fecha_Vencimiento'].notna()
+        if not valid_dates.all():
+            st.warning(f"Se encontraron {len(valid_dates) - valid_dates.sum()} fechas inválidas en 'Fecha_Vencimiento'. Serán ignoradas.")
+        
+        try:
+            expiring_soon = expiration_data[
+                valid_dates & 
+                (expiration_data['Fecha_Vencimiento'] <= expiration_threshold.replace(tzinfo=None))
+            ]
+        except Exception as e:
+            st.error(f"Error al filtrar fechas de vencimiento: {e}")
+            expiring_soon = pd.DataFrame(columns=['Fecha_Vencimiento', 'Stock'])
 
     if not expiring_soon.empty:
         st.write(f"Productos próximos a vencer (en {expiration_days} días):")
