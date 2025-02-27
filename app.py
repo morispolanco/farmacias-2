@@ -1,9 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from pmdarima import auto_arima  # Added for dynamic ARIMA parameter selection
+from pmdarima import auto_arima
 import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
 import io
 
 # Configuración inicial de la página
@@ -22,8 +21,6 @@ def load_data(file):
         df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
         df['Fecha_Vencimiento'] = pd.to_datetime(df['Fecha_Vencimiento'], errors='coerce')
         df.dropna(subset=['Fecha', 'Ventas', 'Stock'], inplace=True)
-        # Ensure continuous dates by filling gaps (optional, uncomment if needed)
-        # df = df.set_index('Fecha').groupby('Producto').apply(lambda x: x.asfreq('D', fill_value=0)).reset_index()
         return df
     except Exception as e:
         st.error(f"Error al cargar el archivo: {e}")
@@ -36,7 +33,7 @@ def preprocess_data(df):
 # Función para pronosticar demanda con auto-ARIMA
 def forecast_demand(data, product, days=30):
     sales = data[product]['Ventas'].values
-    if len(sales) < 30:  # Increased threshold for better ARIMA stability
+    if len(sales) < 30:
         return None, None, f"Se recomiendan al menos 30 días de datos históricos para un pronóstico fiable (disponibles: {len(sales)})."
     try:
         model = auto_arima(sales, seasonal=False, suppress_warnings=True, stepwise=True)
@@ -61,8 +58,8 @@ st.sidebar.header("Configuración")
 uploaded_file = st.sidebar.file_uploader("Sube tu archivo CSV", type="csv")
 
 # Generar CSV de ejemplo con 30 días históricos hasta ayer (26/02/2025)
-today = datetime.now()  # Current date: 2025-02-27
-dates = pd.date_range(start=today - timedelta(days=30), end=today - timedelta(days=1), freq='D')
+today = pd.Timestamp.today()  # Current date: 2025-02-27
+dates = pd.date_range(start=today - pd.Timedelta(days=30), end=today - pd.Timedelta(days=1), freq='D')
 products = ['Paracetamol', 'Ibuprofeno']
 sample_data = pd.DataFrame({
     'Fecha': list(dates) * len(products),
@@ -75,7 +72,7 @@ sample_data = pd.DataFrame({
 })
 sample_csv = sample_data.to_csv(index=False)
 
-# Guía de uso (split into shorter sections)
+# Guía de uso
 with st.sidebar.expander("Guía de Uso"):
     st.write("**Formato del Archivo**: Sube un CSV con: Fecha, Producto, Ventas, Stock, Fecha_Vencimiento. Ejemplo: `2025-01-01, Paracetamol, 10, 50, 2025-06-01`.")
     st.write("**Pasos**: 1) Carga el archivo, 2) Selecciona un producto, 3) Ajusta parámetros, 4) Revisa resultados.")
@@ -96,9 +93,9 @@ if uploaded_file is not None:
     data = load_data(uploaded_file)
     if data is None:
         st.warning("Error al cargar el archivo. Usando datos de ejemplo.")
-        data = sample_data  # Fallback to sample data
+        data = sample_data
 else:
-    data = sample_data  # Default to sample data if no file uploaded
+    data = sample_data
 
 if data is not None:
     preprocessed_data = preprocess_data(data)
@@ -106,7 +103,7 @@ if data is not None:
     products = list(preprocessed_data.keys())
     selected_product = st.sidebar.selectbox("Selecciona un Producto", products)
 
-    # Filtrar datos del producto (from preprocessed data)
+    # Filtrar datos del producto
     product_data = preprocessed_data[selected_product]
 
     # Pronóstico de demanda
@@ -117,7 +114,7 @@ if data is not None:
 
     forecast, conf_int, error = forecast_demand(preprocessed_data, selected_product, forecast_days)
     if forecast is not None:
-        forecast_dates = pd.date_range(start=product_data['Fecha'].max() + timedelta(days=1), periods=forecast_days, freq='D')
+        forecast_dates = pd.date_range(start=product_data['Fecha'].max() + pd.Timedelta(days=1), periods=forecast_days, freq='D')
         forecast_df = pd.DataFrame({'Fecha': forecast_dates, 'Pronóstico': forecast, 'Lower_CI': conf_int[:, 0], 'Upper_CI': conf_int[:, 1]})
 
         fig, ax = plt.subplots(figsize=(12, 6))
@@ -157,8 +154,17 @@ if data is not None:
         st.write(f"Identifica productos que vencerán en {expiration_days} días para priorizar acciones.")
 
     expiration_data = product_data[['Fecha_Vencimiento', 'Stock']].dropna()
-    expiration_threshold = today + timedelta(days=expiration_days)
-    expiring_soon = expiration_data[expiration_data['Fecha_Vencimiento'] <= expiration_threshold]
+    expiration_threshold = pd.Timestamp.today() + pd.Timedelta(days=expiration_days)
+
+    # Debugging output
+    st.write("Debugging expiration data:")
+    st.write(expiration_data)
+    st.write(f"Expiration threshold: {expiration_threshold}")
+
+    expiring_soon = expiration_data[
+        expiration_data['Fecha_Vencimiento'].notna() & 
+        (expiration_data['Fecha_Vencimiento'] <= expiration_threshold)
+    ]
 
     if not expiring_soon.empty:
         st.write(f"Productos próximos a vencer (en {expiration_days} días):")
@@ -179,7 +185,7 @@ if data is not None:
     report_df = pd.DataFrame(report_data)
     if forecast is not None:
         forecast_details = forecast_df[['Fecha', 'Pronóstico']].rename(columns={'Pronóstico': 'Ventas Pronosticadas'})
-        report_df = pd.concat([report_df, forecast_details], axis=1)  # Add daily forecast to report
+        report_df = pd.concat([report_df, forecast_details], axis=1)
     csv = report_df.to_csv(index=False)
     st.download_button(
         label="Descargar Reporte CSV",
