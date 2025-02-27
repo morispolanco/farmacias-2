@@ -86,6 +86,10 @@ def load_data_from_db():
     df = pd.read_sql_query("SELECT * FROM inventory", conn)
     conn.close()
     
+    if df.empty:
+        st.warning("No hay datos en la base de datos.")
+        return None
+    
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
     df['Fecha_Vencimiento'] = pd.to_datetime(df['Fecha_Vencimiento'], errors='coerce')
     
@@ -155,7 +159,7 @@ if not st.session_state.logged_in:
         else:
             st.sidebar.error("Usuario o contraseña incorrectos")
 else:
-    # Mostrar app solo si está autenticado
+    st.title("Inventory Insight - Gestión Inteligente de Inventarios")
     st.sidebar.header("Configuración")
     
     # Formulario para añadir nueva venta
@@ -168,11 +172,13 @@ else:
         if st.button("Guardar Venta"):
             add_sale(fecha.strftime('%Y-%m-%d'), producto, ventas, stock, fecha_vencimiento.strftime('%Y-%m-%d'))
             st.success(f"Venta de {producto} guardada correctamente.")
+            st.experimental_rerun()  # Refresca la página para mostrar los nuevos datos
     
     # Botón para cerrar sesión
     if st.sidebar.button("Cerrar Sesión"):
         st.session_state.logged_in = False
         st.sidebar.success("Sesión cerrada")
+        st.experimental_rerun()
 
     # Guía de uso
     with st.sidebar.expander("Guía de Uso"):
@@ -194,6 +200,9 @@ else:
         products = list(preprocessed_data.keys())
         selected_product = st.sidebar.selectbox("Selecciona un Producto", products)
 
+        # Filtrar datos del producto
+        product_data = preprocessed_data[selected_product]
+
         # Pronóstico de demanda
         st.subheader(f"Análisis para: {selected_product}")
         st.write("### Pronóstico de Demanda")
@@ -202,18 +211,21 @@ else:
 
         forecast, conf_int, error = forecast_demand(preprocessed_data, selected_product, forecast_days)
         if forecast is not None:
-            forecast_dates = pd.date_range(start=product_data['Fecha'].max() + pd.Timedelta(days=1), periods=forecast_days, freq='D')
-            forecast_df = pd.DataFrame({'Fecha': forecast_dates, 'Pronóstico': forecast, 'Lower_CI': conf_int[:, 0], 'Upper_CI': conf_int[:, 1]})
+            if product_data.empty or pd.isna(product_data['Fecha'].max()):
+                st.warning(f"No hay datos históricos válidos para {selected_product}. Agrega más datos para generar un pronóstico.")
+            else:
+                forecast_dates = pd.date_range(start=product_data['Fecha'].max() + pd.Timedelta(days=1), periods=forecast_days, freq='D')
+                forecast_df = pd.DataFrame({'Fecha': forecast_dates, 'Pronóstico': forecast, 'Lower_CI': conf_int[:, 0], 'Upper_CI': conf_int[:, 1]})
 
-            fig, ax = plt.subplots(figsize=(12, 6))
-            ax.plot(product_data['Fecha'], product_data['Ventas'], label='Ventas Históricas', color='blue')
-            ax.plot(forecast_df['Fecha'], forecast_df['Pronóstico'], label='Pronóstico', color='red', linestyle='--')
-            ax.fill_between(forecast_df['Fecha'], forecast_df['Lower_CI'], forecast_df['Upper_CI'], color='red', alpha=0.1, label='Intervalo de Confianza')
-            ax.legend()
-            ax.set_title(f"Pronóstico de Demanda para {selected_product}")
-            ax.set_xlabel("Fecha")
-            ax.set_ylabel("Ventas")
-            st.pyplot(fig)
+                fig, ax = plt.subplots(figsize=(12, 6))
+                ax.plot(product_data['Fecha'], product_data['Ventas'], label='Ventas Históricas', color='blue')
+                ax.plot(forecast_df['Fecha'], forecast_df['Pronóstico'], label='Pronóstico', color='red', linestyle='--')
+                ax.fill_between(forecast_df['Fecha'], forecast_df['Lower_CI'], forecast_df['Upper_CI'], color='red', alpha=0.1, label='Intervalo de Confianza')
+                ax.legend()
+                ax.set_title(f"Pronóstico de Demanda para {selected_product}")
+                ax.set_xlabel("Fecha")
+                ax.set_ylabel("Ventas")
+                st.pyplot(fig)
         else:
             st.warning(error)
 
@@ -222,7 +234,7 @@ else:
         with st.expander("¿Qué significa esto?"):
             st.write("Muestra stock actual, demanda futura, stock esperado y cuánto reabastecer.")
 
-        current_stock = product_data['Stock'].iloc[-1]
+        current_stock = product_data['Stock'].iloc[-1] if not product_data.empty else 0
         predicted_demand = forecast.sum() if forecast is not None else 0
         predicted_stock = current_stock - predicted_demand
         restock_amount = suggest_restock(current_stock, predicted_demand, stock_threshold)
@@ -277,7 +289,7 @@ else:
             'Productos por Vencer': [len(expiring_soon)]
         }
         report_df = pd.DataFrame(report_data)
-        if forecast is not None:
+        if forecast is not None and not product_data.empty:
             forecast_details = forecast_df[['Fecha', 'Pronóstico']].rename(columns={'Pronóstico': 'Ventas Pronosticadas'})
             report_df = pd.concat([report_df, forecast_details], axis=1)
         csv = report_df.to_csv(index=False)
