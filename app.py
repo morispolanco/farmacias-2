@@ -109,32 +109,43 @@ def get_current_stock(producto):
     conn.close()
     return result['Stock'] if result else None
 
-# Función para añadir nueva venta o reabastecimiento a la base de datos
-def add_sale(fecha, producto, ventas, stock_inicial, fecha_vencimiento, is_restock=False):
-    conn = get_db_connection()
-    c = conn.cursor()
+# Inside the "Añadir Nueva Venta" expander
+with st.sidebar.expander("Añadir Nueva Venta"):
+    products = list(preprocessed_data.keys()) if data is not None else []
+    producto_option = st.selectbox("Producto", options=products + ["Otro"], key="venta_producto_select")
+    producto = st.text_input("Nuevo Producto (si seleccionó 'Otro')", key="venta_producto_text") if producto_option == "Otro" else producto_option
     
+    last_date = preprocessed_data[producto]['Fecha'].max() if producto in preprocessed_data and not preprocessed_data[producto].empty else pd.Timestamp.today()
+    default_date = last_date + pd.Timedelta(days=1) if not pd.isna(last_date) else pd.Timestamp.today()
+    
+    num_sales = st.number_input("Número de ventas", min_value=1, value=1, step=1)
+    sales_data = []
     current_stock = get_current_stock(producto)
+    stock_inicial = current_stock if current_stock is not None else st.number_input("Stock Inicial", min_value=0, value=100)
+    remaining_stock = stock_inicial
     
-    if is_restock:
-        new_stock = (current_stock or 0) + stock_inicial  # Aumentar stock
-        ventas = 0  # No hay ventas en un reabastecimiento
-    else:
-        if current_stock is None:
-            new_stock = stock_inicial - ventas
+    for i in range(num_sales):
+        col1, col2 = st.columns(2)
+        fecha = col1.date_input(f"Fecha {i+1}", value=default_date + pd.Timedelta(days=i))
+        ventas = col2.number_input(f"Ventas {i+1}", min_value=0, value=0)
+        sales_data.append((fecha, ventas))
+    
+    fecha_vencimiento = st.date_input("Fecha de Vencimiento", value=datetime.today().replace(year=datetime.today().year + 1), key="venta_vencimiento")
+    
+    if st.button("Guardar Ventas"):
+        if not producto.strip():
+            st.error("El campo 'Producto' no puede estar vacío.")
         else:
-            new_stock = current_stock - ventas
-        
-        if new_stock < 0:
-            st.warning(f"No se puede registrar la venta: las ventas ({ventas}) exceden el stock disponible ({current_stock or stock_inicial}).")
-            conn.close()
-            return False
-    
-    c.execute("INSERT INTO inventory (Fecha, Producto, Ventas, Stock, Fecha_Vencimiento) VALUES (?, ?, ?, ?, ?)",
-              (fecha, producto, ventas, new_stock, fecha_vencimiento))
-    conn.commit()
-    conn.close()
-    return True
+            for fecha, ventas in sales_data:
+                if ventas > remaining_stock:
+                    st.error(f"Ventas ({ventas}) exceden el stock disponible ({remaining_stock}) en {fecha}.")
+                    break
+                success = add_sale(fecha.strftime('%Y-%m-%d'), producto, ventas, remaining_stock, fecha_vencimiento.strftime('%Y-%m-%d'), is_restock=False)
+                if success:
+                    remaining_stock -= ventas
+            else:
+                st.success(f"Ventas de {producto} guardadas. Stock restante: {remaining_stock}")
+                st.experimental_rerun()
 
 # Preprocesar datos para rendimiento
 def preprocess_data(df):
