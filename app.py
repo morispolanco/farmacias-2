@@ -22,7 +22,6 @@ def init_db():
     conn = get_db_connection()
     c = conn.cursor()
     
-    # Crear tabla de inventario
     c.execute('''
         CREATE TABLE IF NOT EXISTS inventory (
             Fecha TEXT,
@@ -33,7 +32,6 @@ def init_db():
         )
     ''')
     
-    # Crear tabla de usuarios
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -41,7 +39,6 @@ def init_db():
         )
     ''')
     
-    # Insertar usuario por defecto si no existe (admin/admin123)
     default_user = 'admin'
     default_password = 'admin123'
     hashed_pw = bcrypt.hashpw(default_password.encode('utf-8'), bcrypt.gensalt())
@@ -49,7 +46,6 @@ def init_db():
     if c.fetchone()[0] == 0:
         c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (default_user, hashed_pw))
     
-    # Insertar datos de ejemplo en inventario si está vacía
     c.execute("SELECT COUNT(*) FROM inventory")
     if c.fetchone()[0] == 0:
         today = pd.Timestamp.today()
@@ -104,14 +100,41 @@ def load_data_from_db():
     
     return df
 
-# Función para añadir nueva venta a la base de datos
-def add_sale(fecha, producto, ventas, stock, fecha_vencimiento):
+# Función para obtener el stock actual de un producto
+def get_current_stock(producto):
     conn = get_db_connection()
     c = conn.cursor()
+    c.execute("SELECT Stock FROM inventory WHERE Producto = ? ORDER BY Fecha DESC LIMIT 1", (producto,))
+    result = c.fetchone()
+    conn.close()
+    return result['Stock'] if result else None
+
+# Función para añadir nueva venta o reabastecimiento a la base de datos
+def add_sale(fecha, producto, ventas, stock_inicial, fecha_vencimiento, is_restock=False):
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    current_stock = get_current_stock(producto)
+    
+    if is_restock:
+        new_stock = (current_stock or 0) + stock_inicial  # Aumentar stock
+        ventas = 0  # No hay ventas en un reabastecimiento
+    else:
+        if current_stock is None:
+            new_stock = stock_inicial - ventas
+        else:
+            new_stock = current_stock - ventas
+        
+        if new_stock < 0:
+            st.warning(f"No se puede registrar la venta: las ventas ({ventas}) exceden el stock disponible ({current_stock or stock_inicial}).")
+            conn.close()
+            return False
+    
     c.execute("INSERT INTO inventory (Fecha, Producto, Ventas, Stock, Fecha_Vencimiento) VALUES (?, ?, ?, ?, ?)",
-              (fecha, producto, ventas, stock, fecha_vencimiento))
+              (fecha, producto, ventas, new_stock, fecha_vencimiento))
     conn.commit()
     conn.close()
+    return True
 
 # Preprocesar datos para rendimiento
 def preprocess_data(df):
@@ -164,16 +187,45 @@ else:
     
     # Formulario para añadir nueva venta
     with st.sidebar.expander("Añadir Nueva Venta"):
-        fecha = st.date_input("Fecha", value=datetime.today())
-        producto = st.text_input("Producto")
-        ventas = st.number_input("Ventas", min_value=0, value=0)
-        stock = st.number_input("Stock", min_value=0, value=0)
-        fecha_vencimiento = st.date_input("Fecha de Vencimiento", value=datetime.today().replace(year=datetime.today().year + 1))
+        fecha = st.date_input("Fecha", value=datetime.today(), key="venta_fecha")
+        producto = st.text_input("Producto", key="venta_producto")
+        ventas = st.number_input("Ventas", min_value=0, value=0, key="venta_ventas")
+        
+        current_stock = get_current_stock(producto)
+        if current_stock is not None:
+            st.write(f"Stock actual de {producto}: {current_stock}")
+            stock_inicial = current_stock
+        else:
+            stock_inicial = st.number_input("Stock Inicial (solo para productos nuevos)", min_value=0, value=100, key="venta_stock")
+        
+        fecha_vencimiento = st.date_input("Fecha de Vencimiento", value=datetime.today().replace(year=datetime.today().year + 1), key="venta_vencimiento")
+        
         if st.button("Guardar Venta"):
-            add_sale(fecha.strftime('%Y-%m-%d'), producto, ventas, stock, fecha_vencimiento.strftime('%Y-%m-%d'))
-            st.success(f"Venta de {producto} guardada correctamente.")
-            st.experimental_rerun()  # Refresca la página para mostrar los nuevos datos
+            if producto.strip() == "":
+                st.error("El campo 'Producto' no puede estar vacío.")
+            elif ventas > (current_stock if current_stock is not None else stock_inicial):
+                st.error(f"Las ventas ({ventas}) no pueden exceder el stock disponible ({current_stock if current_stock is not None else stock_inicial}).")
+            else:
+                success = add_sale(fecha.strftime('%Y-%m-%d'), producto, ventas, stock_inicial, fecha_vencimiento.strftime('%Y-%m-%d'), is_restock=False)
+                if success:
+                    st.success(f"Venta de {producto} guardada correctamente. Stock restante: {get_current_stock(producto)}")
+                    st.experimental_rerun()
     
+    # Formulario para reabastecer stock
+    with st.sidebar.expander("Reabastecer Stock"):
+        producto_restock = st.text_input("Producto a reabastecer", key="restock_producto")
+        cantidad = st.number_input("Cantidad a añadir", min_value=0, value=0, key="restock_cantidad")
+        fecha_restock = st.date_input("Fecha de Reabastecimiento", value=datetime.today(), key="restock_fecha")
+        fecha_venc_restock = st.date_input("Nueva Fecha de Vencimiento", value=datetime.today().replace(year=datetime.today().year + 1), key="restock_vencimiento")
+        if st.button("Reabastecer"):
+            if producto_restock.strip() == "":
+                st.error("El campo 'Producto' no puede estar vacío.")
+            else:
+                success = add_sale(fecha_restock.strftime('%Y-%m-%d'), producto_restock, 0, cantidad, fecha_venc_restock.strftime('%Y-%m-%d'), is_restock=True)
+                if success:
+                    st.success(f"Stock de {producto_restock} aumentado a {get_current_stock(producto_restock)}")
+                    st.experimental_rerun()
+
     # Botón para cerrar sesión
     if st.sidebar.button("Cerrar Sesión"):
         st.session_state.logged_in = False
@@ -182,9 +234,9 @@ else:
 
     # Guía de uso
     with st.sidebar.expander("Guía de Uso"):
-        st.write("**Datos**: La aplicación usa una base de datos SQLite ('inventory.db').")
-        st.write("**Pasos**: 1) Selecciona un producto, 2) Ajusta parámetros, 3) Revisa resultados, 4) Añade ventas si es necesario.")
-        st.write("**Funciones**: Pronósticos, recomendaciones de stock y alertas de vencimiento.")
+        st.write("**Datos**: Usa una base de datos SQLite ('inventory.db').")
+        st.write("**Pasos**: 1) Selecciona un producto, 2) Ajusta parámetros, 3) Revisa resultados, 4) Añade ventas o reabastece stock.")
+        st.write("**Funciones**: Pronósticos, recomendaciones y alertas de vencimiento.")
 
     # Opciones de personalización
     forecast_days = st.sidebar.slider("Días de Pronóstico", 7, 90, 30)
