@@ -9,7 +9,7 @@ import io
 st.set_page_config(page_title="Inventory Insight - Farmacia Galeno", layout="wide")
 st.title("Inventory Insight - Gestión Inteligente de Inventarios")
 
-# Función para cargar y limpiar datos
+# Función para cargar y limpiar datos con validación estricta
 def load_data(file):
     try:
         df = pd.read_csv(file)
@@ -18,9 +18,19 @@ def load_data(file):
             if col not in df.columns:
                 st.error(f"El archivo debe contener la columna: {col}")
                 return None
+        
+        # Convertir fechas con manejo estricto
         df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
         df['Fecha_Vencimiento'] = pd.to_datetime(df['Fecha_Vencimiento'], errors='coerce')
-        df.dropna(subset=['Fecha', 'Ventas', 'Stock'], inplace=True)
+        
+        # Eliminar filas con fechas inválidas
+        df.dropna(subset=['Fecha', 'Ventas', 'Stock', 'Fecha_Vencimiento'], inplace=True)
+        
+        # Validar que Fecha_Vencimiento sea datetime64
+        if not pd.api.types.is_datetime64_any_dtype(df['Fecha_Vencimiento']):
+            st.error("La columna 'Fecha_Vencimiento' contiene valores no válidos después de la conversión.")
+            return None
+        
         return df
     except Exception as e:
         st.error(f"Error al cargar el archivo: {e}")
@@ -158,12 +168,18 @@ if data is not None:
 
     # Debugging output
     st.write("Debugging expiration data:")
-    st.write(expiration_data)
-    st.write(f"Expiration threshold: {expiration_threshold}")
+    st.write("Expiration data types:", expiration_data.dtypes)
+    st.write("Expiration data sample:", expiration_data.head())
+    st.write(f"Expiration threshold: {expiration_threshold} (type: {type(expiration_threshold)})")
 
+    # Robust comparison with type checking
+    valid_dates = expiration_data['Fecha_Vencimiento'].notna()
+    if not valid_dates.all():
+        st.warning("Algunas fechas en 'Fecha_Vencimiento' son inválidas y serán ignoradas.")
+    
     expiring_soon = expiration_data[
-        expiration_data['Fecha_Vencimiento'].notna() & 
-        (expiration_data['Fecha_Vencimiento'] <= expiration_threshold)
+        valid_dates & 
+        (expiration_data['Fecha_Vencimiento'] <= expiration_threshold.replace(tzinfo=None))
     ]
 
     if not expiring_soon.empty:
