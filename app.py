@@ -4,7 +4,6 @@ import numpy as np
 from pmdarima import auto_arima
 import matplotlib.pyplot as plt
 import sqlite3
-import io
 from datetime import datetime
 import bcrypt
 
@@ -22,16 +21,18 @@ def init_db():
     conn = get_db_connection()
     c = conn.cursor()
     
+    # Crear tabla de inventario
     c.execute('''
         CREATE TABLE IF NOT EXISTS inventory (
             Fecha TEXT,
-            Producto TEXT,
+            Producto TEXT, 
             Ventas INTEGER,
             Stock INTEGER,
             Fecha_Vencimiento TEXT
         )
     ''')
     
+    # Crear tabla de usuarios
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -39,6 +40,7 @@ def init_db():
         )
     ''')
     
+    # Crear usuario administrador por defecto si no existe
     default_user = 'admin'
     default_password = 'admin123'
     hashed_pw = bcrypt.hashpw(default_password.encode('utf-8'), bcrypt.gensalt())
@@ -46,6 +48,7 @@ def init_db():
     if c.fetchone()[0] == 0:
         c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (default_user, hashed_pw))
     
+    # Insertar datos de muestra si la tabla está vacía
     c.execute("SELECT COUNT(*) FROM inventory")
     if c.fetchone()[0] == 0:
         today = pd.Timestamp.today()
@@ -81,7 +84,7 @@ def load_data_from_db():
     conn = get_db_connection()
     df = pd.read_sql_query("SELECT * FROM inventory", conn)
     conn.close()
-    
+     
     if df.empty:
         st.warning("No hay datos en la base de datos.")
         return None
@@ -245,7 +248,7 @@ else:
 
     # Cargar datos desde la base de datos
     data = load_data_from_db()
-
+ 
     if data is not None:
         preprocessed_data = preprocess_data(data)
         st.sidebar.success("Datos cargados correctamente desde la base de datos")
@@ -298,7 +301,7 @@ else:
         col4.metric("Recomendación de Reabastecimiento", int(restock_amount))
 
         if predicted_stock < stock_threshold:
-            st.warning(f"¡Alerta! Stock esperado ({int(predicted_stock)}) por debajo del umbral ({stock_threshold}). Reabastece {int(restock_amount)} unidades.")
+            st.warning(f"¡Alerta! Stock esperado ({int(predicted_stock)}) por debajo del umbral ({stock_threshold}). Reabastece {int(restock_amount)} unidades.") 
 
         # Control de vencimientos
         st.write("### Control de Vencimientos")
@@ -315,43 +318,13 @@ else:
             if not valid_dates.all():
                 st.warning(f"Se encontraron fechas inválidas en 'Fecha_Vencimiento'. Serán ignoradas.")
             
-            try:
-                expiring_soon = expiration_data[
-                    valid_dates & 
-                    (expiration_data['Fecha_Vencimiento'] <= expiration_threshold.replace(tzinfo=None))
-                ]
-            except Exception as e:
-                st.error(f"Error al filtrar fechas de vencimiento: {e}")
-                expiring_soon = pd.DataFrame(columns=['Fecha_Vencimiento', 'Stock'])
-
+            expiring_soon = expiration_data[
+                valid_dates & 
+                (expiration_data['Fecha_Vencimiento'] <= expiration_threshold)
+            ]
+        
         if not expiring_soon.empty:
-            st.write(f"Productos próximos a vencer (en {expiration_days} días):")
-            st.dataframe(expiring_soon.style.format({'Fecha_Vencimiento': '{:%Y-%m-%d}'}))
+            st.write("Productos próximos a vencer:")
+            st.dataframe(expiring_soon)
         else:
-            st.success(f"No hay productos próximos a vencer en los próximos {expiration_days} días.")
-
-        # Exportar reporte con detalles de pronóstico
-        st.write("### Descargar Reporte")
-        report_data = {
-            'Producto': [selected_product],
-            'Stock Actual': [current_stock],
-            'Demanda Pronosticada': [predicted_demand],
-            'Stock Esperado': [predicted_stock],
-            'Reabastecimiento Sugerido': [restock_amount],
-            'Productos por Vencer': [len(expiring_soon)]
-        }
-        report_df = pd.DataFrame(report_data)
-        if forecast is not None and not product_data.empty:
-            forecast_details = forecast_df[['Fecha', 'Pronóstico']].rename(columns={'Pronóstico': 'Ventas Pronosticadas'})
-            report_df = pd.concat([report_df, forecast_details], axis=1)
-        csv = report_df.to_csv(index=False)
-        st.download_button(
-            label="Descargar Reporte CSV",
-            data=csv,
-            file_name=f"Reporte_{selected_product}_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
-
-# Pie de página
-st.sidebar.markdown("---")
-st.sidebar.write("Desarrollado por xAI para Farmacia XYZ - 2025")
+            st.info("No hay productos próximos a vencer en el período seleccionado.")
