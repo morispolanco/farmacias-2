@@ -84,7 +84,7 @@ def load_data_from_db():
     conn = get_db_connection()
     df = pd.read_sql_query("SELECT * FROM inventory", conn)
     conn.close()
-     
+    
     if df.empty:
         st.warning("No hay datos en la base de datos.")
         return None
@@ -248,7 +248,7 @@ else:
 
     # Cargar datos desde la base de datos
     data = load_data_from_db()
- 
+  
     if data is not None:
         preprocessed_data = preprocess_data(data)
         st.sidebar.success("Datos cargados correctamente desde la base de datos")
@@ -267,7 +267,7 @@ else:
         forecast, conf_int, error = forecast_demand(preprocessed_data, selected_product, forecast_days)
         if forecast is not None:
             if product_data.empty or pd.isna(product_data['Fecha'].max()):
-                st.warning(f"No hay datos históricos válidos para {selected_product}. Agrega más datos para generar un pronóstico.")
+                st.warning(f"No hay datos históricos válidos para {selected_product}. Agrega más datos para generar un pronóstico.") 
             else:
                 forecast_dates = pd.date_range(start=product_data['Fecha'].max() + pd.Timedelta(days=1), periods=forecast_days, freq='D')
                 forecast_df = pd.DataFrame({'Fecha': forecast_dates, 'Pronóstico': forecast, 'Lower_CI': conf_int[:, 0], 'Upper_CI': conf_int[:, 1]})
@@ -301,7 +301,7 @@ else:
         col4.metric("Recomendación de Reabastecimiento", int(restock_amount))
 
         if predicted_stock < stock_threshold:
-            st.warning(f"¡Alerta! Stock esperado ({int(predicted_stock)}) por debajo del umbral ({stock_threshold}). Reabastece {int(restock_amount)} unidades.") 
+            st.warning(f"¡Alerta! Stock esperado ({int(predicted_stock)}) por debajo del umbral ({stock_threshold}). Reabastece {int(restock_amount)} unidades.")  
 
         # Control de vencimientos
         st.write("### Control de Vencimientos")
@@ -322,9 +322,9 @@ else:
                 valid_dates & 
                 (expiration_data['Fecha_Vencimiento'] <= expiration_threshold)
             ]
-        
+
         if not expiring_soon.empty:
             st.write("Productos próximos a vencer:")
             st.dataframe(expiring_soon)
         else:
-            st.info("No hay productos próximos a vencer en el período seleccionado.")
+            st.success("No hay productos próximos a vencer en los próximos días.")
